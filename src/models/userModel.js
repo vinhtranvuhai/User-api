@@ -29,6 +29,19 @@ const userSchema = new mongoose.Schema({
       message: 'Invalid date of birth',
     },
   },
+  notificationEnabled: {
+    type: Boolean,
+    default: true
+  },
+  onlineStatus: {
+    type: String,
+    enum: ['online', 'offline', 'away'],
+    default: 'offline'
+  },
+  lastSeen: {
+    type: Date,
+    default: null
+  }
 }, {
   timestamps: true,
 });

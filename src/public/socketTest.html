@@ -7,124 +7,414 @@
   <script src="/socket.io/socket.io.js"></script>
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-    .container { max-width: 800px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
-    button { padding: 12px 20px; margin: 5px; font-size: 16px; cursor: pointer; }
+    .container { max-width: 900px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    button { padding: 10px 16px; margin: 5px; font-size: 15px; cursor: pointer; border: none; border-radius: 5px; }
     button.leave { background: #ff4444; color: white; }
     button.reset { background: #333; color: white; }
+    button.recall { background: #ff9800; color: white; font-size: 12px; padding: 4px 8px; margin-left: 8px; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
     #log { background: #f0f0f0; padding: 15px; height: 500px; overflow-y: auto; font-family: monospace; border: 1px solid #ddd; border-radius: 5px; }
-    .msg { margin: 10px 0; padding: 10px; background: #e9e9e9; border-radius: 5px; }
-    .status { padding: 10px; margin: 10px 0; border-radius: 5px; font-weight: bold; }
+    .msg { margin: 10px 0; padding: 12px; background: #e9e9e9; border-radius: 8px; position: relative; }
+    .msg.me { background: #d4edda; text-align: right; }
+    .typing { font-style: italic; color: #666; margin: 5px 0; }
+    .status { padding: 12px; margin: 10px 0; border-radius: 5px; font-weight: bold; }
     .success { background: #d4edda; color: #155724; }
     .error { background: #f8d7da; color: #721c24; }
     .info { background: #d1ecf1; color: #0c5460; }
+    .input-group { display: flex; gap: 10px; margin: 15px 0; }
+    input[type="text"], input[type="email"], input[type="password"] { flex: 1; padding: 12px; font-size: 16px; border: 1px solid #ddd; border-radius: 5px; }
+    label { display: flex; align-items: center; gap: 8px; font-size: 15px; }
+    #onlineList, #roomMembers { margin: 15px 0; padding: 10px; background: #f0f0f0; border-radius: 5px; }
+    .login-form { margin-bottom: 20px; padding: 15px; background: #f9f9f9; border-radius: 8px; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>Socket.IO Real-time Test</h1>
-    <div id="status" class="status info">Nhập token từ Postman để bắt đầu</div>
-    <p><strong>User:</strong> <span id="user">Chưa kết nối</span></p>
 
-    <button onclick="resetTest()" class="reset">Reset & Nhập Token Mới</button>
-    <button onclick="joinRoom()">Join Room</button>
-    <button onclick="leaveRoom()" class="leave">Leave Room</button>
-    <button onclick="sendMessage()">Send Message</button>
-    <button onclick="sendNotify()">Send Notify</button>
-    <button onclick="typing(true)">Typing ON</button>
-    <button onclick="typing(false)">Typing OFF</button>
+    <div class="login-form" id="loginForm">
+      <h3>Đăng nhập</h3>
+      <div class="input-group">
+        <input type="email" id="loginEmail" placeholder="Email (ví dụ: joon2@example.com)" />
+      </div>
+      <div class="input-group">
+        <input type="password" id="loginPassword" placeholder="Mật khẩu" />
+      </div>
+      <button onclick="login()" style="width: 100%; background: #007bff; color: white;">Đăng nhập</button>
+      <p style="margin-top: 10px; font-size: 14px;">
+        <strong>Gợi ý:</strong> joon2@example.com / 123456<br>
+        hwa@gmail.com / 123456
+      </p>
+    </div>
 
-    <div id="log"></div>
+    <div id="chatInterface" style="display: none;">
+      <div id="status" class="status info">Đang kết nối...</div>
+      <p><strong>User:</strong> <span id="user">Chưa kết nối</span></p>
+
+      <div>
+        <button onclick="resetTest()" class="reset">Reset & Đăng nhập lại</button>
+        <button id="joinGroupBtn" onclick="joinGroupRoom()" disabled>Join Phòng Nhóm</button>
+        <button id="leaveRoomBtn" onclick="leaveRoom()" class="leave" disabled>Leave Room</button>
+        <button id="notifyGroupBtn" onclick="sendNotifyToRoom()" disabled>Gửi Notify Nhóm</button>
+      </div>
+
+      <div class="input-group">
+        <input type="email" id="targetUserEmail" placeholder="Email người nhận (ví dụ: hwa@gmail.com)" />
+        <button id="privateChatBtn" onclick="startPrivateChat()" disabled>Chat 1-1</button>
+      </div>
+
+      <div id="onlineList">Đang tải...</div>
+      <div id="roomMembers">Thành viên trong phòng: <span id="membersList">Chưa vào phòng</span></div>
+
+      <div class="input-group">
+        <input type="text" id="msgInput" placeholder="Nhập tin nhắn..." oninput="handleTyping()" disabled />
+        <button id="sendMsgBtn" onclick="sendMessage()" disabled>Gửi</button>
+      </div>
+
+      <label>
+        <input type="checkbox" id="notifyToggle" checked onchange="toggleNotify(this.checked)" />
+        Bật thông báo
+      </label>
+
+      <div id="log"></div>
+    </div>
   </div>
 
   <script>
+    function createRoomId(userId1, userId2) {
+      const ids = [userId1, userId2].sort();
+      return `private-${ids[0]}-${ids[1]}`;
+    }
+
+    // ELEMENTS
+    const loginForm = document.getElementById('loginForm');
+    const chatInterface = document.getElementById('chatInterface');
     const statusEl = document.getElementById('status');
     const log = document.getElementById('log');
     const userEl = document.getElementById('user');
+    const msgInput = document.getElementById('msgInput');
+    const onlineList = document.getElementById('onlineList');
+    const membersList = document.getElementById('membersList');
+
+    const joinGroupBtn = document.getElementById('joinGroupBtn');
+    const leaveRoomBtn = document.getElementById('leaveRoomBtn');
+    const notifyGroupBtn = document.getElementById('notifyGroupBtn');
+    const privateChatBtn = document.getElementById('privateChatBtn');
+    const sendMsgBtn = document.getElementById('sendMsgBtn');
+
+    let currentUserId = null;
+    let currentRoomId = null;
+    let typingTimer;
+    let socket = null;
+    let isReady = false;
+
+    
+    window.login = async () => {
+      const email = document.getElementById('loginEmail').value.trim();
+      const password = document.getElementById('loginPassword').value;
+
+      if (!email || !password) return alert('Vui lòng nhập email và mật khẩu!');
+
+      setStatus('Đang đăng nhập...', 'info');
+
+      try {
+        const res = await fetch('/api/users/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+
+        const data = await res.json();
+        console.log('Login response:', data);
+        if (!res.ok) throw new Error(data.message || 'Đăng nhập thất bại');
+
+        const token = data.accessToken || data.token;
+        if (!token) throw new Error('Không tìm thấy token trong response');
+
+        sessionStorage.setItem('token', token);
+        loginForm.style.display = 'none';
+        chatInterface.style.display = 'block';
+        setStatus('Đang kết nối socket...', 'info');
+        initSocket(token);
+
+      } catch (err) {
+        console.error('Login error:', err);
+        alert('Lỗi: ' + err.message);
+        setStatus('Đăng nhập thất bại!', 'error');
+      }
+    };
+
+   
+    window.resetTest = () => {
+      if (confirm('Reset và đăng nhập user mới?')) {
+        sessionStorage.removeItem('token');
+        localStorage.removeItem('token');
+        if (socket) socket.disconnect();
+        location.reload();
+      }
+    };
 
     function setStatus(message, type = 'info') {
-      statusEl.textContent = message;
-      statusEl.className = `status ${type}`;
+      if (statusEl) {
+        statusEl.textContent = message;
+        statusEl.className = `status ${type}`;
+      }
     }
 
-    function add(event, data) {
+    function enableChat() {
+      joinGroupBtn.disabled = false;
+      privateChatBtn.disabled = false;
+      msgInput.disabled = false;
+      sendMsgBtn.disabled = false;
+      isReady = true;
+    }
+
+    function initSocket(token) {
+      if (!token) {
+        setStatus('Lỗi: Thiếu token!', 'error');
+        return;
+      }
+
+      if (socket) socket.disconnect();
+
+      socket = io({
+        auth: { token },
+        transports: ['websocket'],
+        autoConnect: false
+      });
+
+      socket.connect();
+
+      socket.on('connect', () => {
+        fetch('/api/users/me', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        })
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        })
+        .then(u => {
+          currentUserId = u._id;
+          userEl.textContent = u.name || u.email;
+          setStatus('Đã sẵn sàng!', 'success');
+          enableChat();
+        })
+        .catch(err => {
+          console.error('Lỗi /me:', err);
+          setStatus('Token không hợp lệ!', 'error');
+          sessionStorage.removeItem('token');
+          resetTest();
+        });
+      });
+
+      socket.on('disconnect', () => setStatus('Mất kết nối', 'error'));
+      socket.on('connect_error', (err) => {
+        setStatus(`Lỗi: ${err.message}`, 'error');
+        if (err.message.includes('token')) {
+          sessionStorage.removeItem('token');
+          resetTest();
+        }
+      });
+
+     
+      socket.on('room:members', (members) => {
+        const list = members
+          .map(m => `${m.name || m.email} <span style="color: ${m.onlineStatus === 'online' ? 'green' : 'gray'}">[${m.onlineStatus}]</span>`)
+          .join(', ') || 'Chỉ có bạn';
+        membersList.innerHTML = list;
+      });
+
+      socket.on('room:user-joined', (data) => setStatus(`${data.message}`, 'info'));
+      socket.on('room:user-left', (data) => setStatus(`${data.message}`, 'info'));
+      socket.on('room:joined', () => {
+        setStatus(`Đã vào: ${currentRoomId}`, 'success');
+        leaveRoomBtn.disabled = false;
+        notifyGroupBtn.disabled = false;
+      });
+
+      socket.on('room:history', msgs => { log.innerHTML = ''; msgs.forEach(renderMessage); });
+
+      
+      socket.on('room:message', (data) => {
+        renderMessage(data);
+
+       
+        if (document.hidden && Notification.permission === "granted") {
+          new Notification(`Tin mới từ ${data.user.name || data.user.email}`, {
+            body: data.message.substring(0, 50) + (data.message.length > 50 ? '...' : ''),
+            icon: '/icon.png',
+            tag: 'chat-' + data._id
+          });
+        }
+      });
+
+      socket.on('room:deleted', ({ msgId }) => document.getElementById(msgId)?.remove());
+
+     socket.on('notification:receive', (d) => {
+      console.log(" Nhận thông báo:", d);
+
+    const note = document.createElement('div');
+      note.className = 'msg info';
+      note.innerHTML = `<strong>🔔 ${d.from.name || d.from.email}:</strong> ${d.title} - ${d.body}`;
+      log.appendChild(note);
+      log.scrollTop = log.scrollHeight;
+
+    if (document.hidden && Notification.permission === "granted") {
+        new Notification(`${d.from.name || d.from.email} gửi: ${d.title}`, {
+          body: d.body,
+          icon: '/icon.png',
+          tag: 'notify-' + Date.now()
+        });
+      } else {
+        showPopupNotification(`${d.title}`, `${d.body}`, d.type);
+      }
+    });
+
+    function showPopupNotification(title, body, type = "info") {
+      const popup = document.createElement("div");
+      popup.className = `popup-notification ${type}`;
+      popup.innerHTML = `
+        <div class="popup-header">${title}</div>
+        <div class="popup-body">${body}</div>
+      `;
+      document.body.appendChild(popup);
+      setTimeout(() => popup.remove(), 4000);
+    }
+
+    const style = document.createElement("style");
+    style.innerHTML = `
+    .popup-notification {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: #323232;
+      color: white;
+      padding: 10px 15px;
+      border-radius: 8px;
+      margin-top: 8px;
+      min-width: 220px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      animation: slideIn 0.3s ease;
+      z-index: 9999;
+    }
+    .popup-notification.direct { background: #007bff; }
+    .popup-notification.group { background: #17a2b8; }
+    .popup-header { font-weight: bold; margin-bottom: 4px; }
+    @keyframes slideIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    `;
+    document.head.appendChild(style);
+
+
+      socket.on('room:typing', renderTyping);
+      socket.on('server:online-users', renderOnlineList);
+
+      socket.on('notification:sent-to-room', (d) => {
+        alert(`Gửi đến ${d.sentCount} người trong phòng`);
+      });
+
+      window.joinGroupRoom = () => {
+        currentRoomId = 'chat-123';
+        socket.emit('room:join', { roomId: currentRoomId });
+        log.innerHTML = '';
+      };
+
+      window.startPrivateChat = () => {
+        if (!isReady) return alert('Đang tải...');
+        const email = document.getElementById('targetUserEmail').value.trim();
+        if (!email) return alert('Nhập email!');
+
+        socket.emit('room:find-user', { email }, (res) => {
+          if (res.error) return alert(res.error);
+          currentRoomId = createRoomId(currentUserId, res.user._id);
+          socket.emit('room:join', { roomId: currentRoomId });
+          log.innerHTML = '';
+          setStatus(`Chat với ${res.user.name || email}`, 'success');
+        });
+      };
+
+      window.leaveRoom = () => {
+        if (currentRoomId) {
+          socket.emit('room:leave', { roomId: currentRoomId });
+          currentRoomId = null;
+          log.innerHTML = '';
+          setStatus('Đã rời phòng', 'info');
+          leaveRoomBtn.disabled = true;
+          notifyGroupBtn.disabled = true;
+          membersList.innerHTML = 'Chưa vào phòng';
+        }
+      };
+
+      window.sendMessage = () => {
+        const msg = msgInput.value.trim();
+        if (!msg || !currentRoomId) return;
+        socket.emit('room:message', { roomId: currentRoomId, message: msg });
+        msgInput.value = '';
+      };
+
+      window.sendNotifyToRoom = () => {
+        if (!currentRoomId) return alert('Vào phòng trước!');
+        const title = prompt('Tiêu đề thông báo:');
+        const body = prompt('Nội dung:');
+        if (title && body) {
+          socket.emit('notification:send-to-room', { roomId: currentRoomId, title, body });
+        }
+      };
+
+      window.toggleNotify = (e) => socket.emit('notification:toggle', e);
+
+      window.handleTyping = () => {
+        if (!currentRoomId) return;
+        socket.emit('room:typing', { roomId: currentRoomId, isTyping: true });
+        clearTimeout(typingTimer);
+        typingTimer = setTimeout(() => {
+          socket.emit('room:typing', { roomId: currentRoomId, isTyping: false });
+        }, 1000);
+      };
+    }
+
+    function renderMessage(data) {
       const div = document.createElement('div');
-      div.className = 'msg';
-      div.innerHTML = `<strong>${new Date().toLocaleTimeString()} - ${event}</strong><pre>${JSON.stringify(data, null, 2)}</pre>`;
+      div.id = data._id;
+      div.className = `msg ${data.user._id === currentUserId ? 'me' : ''}`;
+      div.innerHTML = `
+        <strong>${data.user.name || data.user.email}:</strong> ${data.message}
+        ${data.user._id === currentUserId ? `<button class="recall" onclick="deleteMsg('${data._id}')">Thu hồi</button>` : ''}
+      `;
       log.appendChild(div);
       log.scrollTop = log.scrollHeight;
     }
 
-    function resetTest() {
-      localStorage.removeItem('token');
-      setStatus('Đã xóa token cũ. Nhập token mới từ Postman.', 'success');
-      setTimeout(() => {
-        const newToken = prompt('Dán token từ Postman vào đây:');
-        if (newToken && newToken.trim()) {
-          localStorage.setItem('token', newToken.trim());
-          setStatus('Token đã lưu! Đang kết nối...', 'info');
-          location.reload();
-        } else {
-          setStatus('Token không hợp lệ!', 'error');
-        }
-      }, 500);
+    window.deleteMsg = (id) => {
+      if (confirm('Thu hồi tin nhắn?') && currentRoomId) {
+        socket.emit('room:delete', { msgId: id, roomId: currentRoomId });
+      }
+    };
+
+    function renderTyping({ userName, isTyping }) {
+      let el = document.getElementById('typing-indicator');
+      if (!el) { el = document.createElement('div'); el.id = 'typing-indicator'; el.className = 'typing'; log.appendChild(el); }
+      el.textContent = isTyping ? `${userName} đang gõ...` : '';
+      if (!isTyping) setTimeout(() => el.remove(), 1000);
     }
 
-    const token = localStorage.getItem('token');
-    if (!token) {
-      setStatus('Chưa có token. Click "Reset & Nhập Token Mới" để dán token từ Postman.', 'error');
-    } else {
-      setStatus('Đang kết nối với token đã lưu...', 'info');
+    function renderOnlineList(users) {
+      onlineList.innerHTML = users
+        .map(u => `${u.name || u.email} <span style="color:${u.onlineStatus==='online'?'green':'gray'}">[${u.onlineStatus}]</span>`)
+        .join('<br>') || 'Không ai online';
+    }
+
+    if (Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+
+    const token = sessionStorage.getItem('token');
+    if (token) {
+      loginForm.style.display = 'none';
+      chatInterface.style.display = 'block';
       initSocket(token);
-    }
-
-    function initSocket(token) {
-      const socket = io({
-        auth: { token },
-        transports: ['websocket']
-      });
-
-      socket.on('connect', () => {
-        add('Connected', { id: socket.id });
-        setStatus('Kết nối thành công!', 'success');
-
-        fetch('/api/users/me', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        })
-        .then(r => r.json())
-        .then(u => {
-          userEl.textContent = u.email || u.name || 'Unknown';
-        })
-        .catch(() => {
-          userEl.textContent = 'Lấy user thất bại';
-        });
-      });
-
-      socket.on('disconnect', () => {
-        add('Disconnected', null);
-        setStatus('Mất kết nối', 'error');
-      });
-
-      socket.on('connect_error', (err) => {
-        add('Connect Error', { message: err.message });
-        setStatus(`Lỗi: ${err.message} (Token sai hoặc hết hạn?)`, 'error');
-      });
-
-      socket.on('room:joined', d => add('room:joined', d));
-      socket.on('room:members', d => add('room:members', d));
-      socket.on('room:message', d => add('room:message', d));
-      socket.on('room:user-joined', d => add('room:user-joined', d));
-      socket.on('room:user-left', d => add('room:user-left', d));
-      socket.on('notification:receive', d => add('notification:receive', d));
-      socket.on('state:typing', d => add('state:typing', d));
-
-      window.joinRoom = () => socket.emit('room:join', { roomId: 'chat-123' });
-      window.leaveRoom = () => socket.emit('room:leave', { roomId: 'chat-123' });
-      window.sendMessage = () => {
-        const msg = prompt('Tin nhắn:', 'Hello from test page!');
-        if (msg) socket.emit('room:message', { roomId: 'chat-123', message: msg });
-      };
-      window.sendNotify = () => socket.emit('notification:send', { targetUserId: 2, title: 'Hi', body: 'From test page!' });
-      window.typing = (isTyping) => socket.emit('state:typing', { roomId: 'chat-123', isTyping });
     }
   </script>
 </body>

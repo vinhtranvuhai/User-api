@@ -18,10 +18,35 @@ router.post('/signup', async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    const result = await loginUser(email, password);
-    res.status(200).json(result);
+    const result = await loginUser(email, password); 
+    res.status(200).json({
+      success: true,
+      token: result.token,  
+      user: result.user
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
+
+// GET /api/users/me 
+router.get('/me', authenticateToken, async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ success: false, message: 'Access denied' });
+    }
+
+    res.json({
+      _id: req.user._id,
+      email: req.user.email,
+      name: req.user.name || req.user.email.split('@')[0]
+    });
+  } catch (error) {
+    console.error('GET /me error:', error.message);
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 

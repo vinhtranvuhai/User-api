@@ -95,7 +95,14 @@ const loginUser = async (email, password) => {
       { expiresIn: '1h' }
     );
 
-    return { success: true, data: { token } };
+    return {
+    user: {
+      _id: user._id,
+      email: user.email,
+      name: user.name
+    },
+    token: token  
+  };
   } catch (error) {
     throw new Error(error.message);
   }
